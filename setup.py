@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-import io
 import os
 import subprocess
 import sys
@@ -9,6 +8,7 @@ from distutils.sysconfig import get_python_inc
 import distutils.util
 from distutils import ccompiler, msvccompiler
 from setuptools import Extension, setup, find_packages
+from pathlib import Path
 
 
 def is_new_osx():
@@ -105,25 +105,19 @@ class build_ext_subclass(build_ext, build_ext_options):
 
 def generate_cython(root, source):
     print("Cythonizing sources")
-    p = subprocess.call(
-        [sys.executable, os.path.join(root, "bin", "cythonize.py"), source],
-        env=os.environ,
-    )
+    script = root / "bin" / "cythonize.py"
+    p = subprocess.call([sys.executable, str(script), source], env=os.environ)
     if p != 0:
         raise RuntimeError("Running cythonize failed")
-
-
-def is_source_release(path):
-    return os.path.exists(os.path.join(path, "PKG-INFO"))
 
 
 def clean(path):
     for name in MOD_NAMES:
         name = name.replace(".", "/")
-        for ext in [".so", ".html", ".cpp", ".c"]:
-            file_path = os.path.join(path, name + ext)
-            if os.path.exists(file_path):
-                os.unlink(file_path)
+        for ext in ["so", "html", "cpp", "c"]:
+            file_path = path / f"{name}.{ext}"
+            if file_path.exists():
+                file_path.unlink()
 
 
 @contextlib.contextmanager
@@ -139,26 +133,23 @@ def chdir(new_dir):
 
 
 def setup_package():
-    root = os.path.abspath(os.path.dirname(__file__))
+    root = Path(__file__).parent
 
     if len(sys.argv) > 1 and sys.argv[1] == "clean":
         return clean(root)
 
     with chdir(root):
-        with io.open(os.path.join(root, "spacy", "about.py"), encoding="utf8") as f:
+        with (root / "spacy" / "about.py").open("r") as f:
             about = {}
             exec(f.read(), about)
 
-        include_dirs = [
-            get_python_inc(plat_specific=True),
-            os.path.join(root, "include"),
-        ]
+        include_dirs = [get_python_inc(plat_specific=True), str(root / "include")]
 
         if (
             ccompiler.new_compiler().compiler_type == "msvc"
             and msvccompiler.get_build_version() == 9
         ):
-            include_dirs.append(os.path.join(root, "include", "msvc9"))
+            include_dirs.append(str(root / "include" / "msvc9"))
 
         ext_modules = []
         for mod_name in MOD_NAMES:
@@ -170,8 +161,8 @@ def setup_package():
             if sys.platform == "darwin":
                 dylib_path = [".." for _ in range(mod_name.count("."))]
                 dylib_path = "/".join(dylib_path)
-                dylib_path = "@loader_path/%s/spacy/platform/darwin/lib" % dylib_path
-                extra_link_args.append("-Wl,-rpath,%s" % dylib_path)
+                dylib_path = f"@loader_path/{dylib_path}/spacy/platform/darwin/lib"
+                extra_link_args.append(f"-Wl,-rpath,{dylib_path}")
             ext_modules.append(
                 Extension(
                     mod_name,
@@ -182,7 +173,7 @@ def setup_package():
                 )
             )
 
-        if not is_source_release(root):
+        if not (root / "PKG-INFO").exists():  # not source release
             generate_cython(root, "spacy")
 
         setup(
